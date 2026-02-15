@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Media Bridge</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 30px;
+            background: #f4f6f9;
+        }
+
+        h2 {
+            color: #333;
+        }
+
+        input, select, button {
+            margin-top: 15px;
+            padding: 10px;
+            width: 90%;
+            max-width: 400px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            font-size: 16px;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+
+        button:disabled {
+            background: #999;
+        }
+
+        #progressBarContainer {
+            margin-top: 20px;
+            width: 90%;
+            max-width: 400px;
+            height: 20px;
+            background: #ddd;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        #progressBar {
+            height: 100%;
+            width: 0%;
+            background: #4CAF50;
+            text-align: center;
+            color: white;
+            font-size: 12px;
+        }
+
+        #downloadLink {
+            margin-top: 20px;
+            display: block;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+<h2>Upload iPhone Video</h2>
+
+<input type="file" id="fileInput" />
+<br>
+
+<select id="mode">
+    <option value="safe">Safe (720p - Max Compatible)</option>
+    <option value="high">High (1080p)</option>
+</select>
+
+<br>
+
+<button id="convertBtn" onclick="uploadVideo()">Convert</button>
+
+<div id="status"></div>
+
+<div id="progressBarContainer" style="display:none;">
+    <div id="progressBar">0%</div>
+</div>
+
+<a id="downloadLink"></a>
+
+<script>
+
+let jobId = null;
+
+function uploadVideo() {
+
+    let file = document.getElementById("fileInput").files[0];
+    let mode = document.getElementById("mode").value;
+    let button = document.getElementById("convertBtn");
+
+    if (!file) {
+        alert("Please select a video file");
+        return;
+    }
+
+    button.disabled = true;
+    button.innerText = "Uploading...";
+
+    document.getElementById("status").innerText = "Uploading video...";
+    document.getElementById("downloadLink").innerText = "";
+    document.getElementById("progressBarContainer").style.display = "none";
+
+    let formData = new FormData();
+    formData.append("file", file);
+    formData.append("mode", mode);
+
+    fetch("/MediaBridge/media/convert", {
+        method: "POST",
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+
+        jobId = data.jobId;
+
+        button.innerText = "Processing...";
+        document.getElementById("status").innerText = "Processing video...";
+        document.getElementById("progressBarContainer").style.display = "block";
+
+        checkStatus();
+    })
+    .catch(error => {
+        alert("Upload failed!");
+        button.disabled = false;
+        button.innerText = "Convert";
+    });
+}
+
+function checkStatus() {
+
+    let interval = setInterval(() => {
+
+        fetch("/MediaBridge/media/status/" + jobId)
+        .then(response => response.json())
+        .then(data => {
+
+            document.getElementById("status").innerText = "Status: " + data.status;
+
+            let progressBar = document.getElementById("progressBar");
+            progressBar.style.width = data.progress + "%";
+            progressBar.innerText = data.progress + "%";
+
+            if (data.status === "COMPLETED") {
+
+                clearInterval(interval);
+
+                document.getElementById("status").innerText = "Conversion Completed!";
+                document.getElementById("convertBtn").innerText = "Convert Again";
+                document.getElementById("convertBtn").disabled = false;
+
+                let downloadLink = document.getElementById("downloadLink");
+                downloadLink.href = "/MediaBridge/media/download/" + jobId;
+                downloadLink.innerText = "Download Converted Video";
+            }
+
+            if (data.status === "FAILED") {
+                clearInterval(interval);
+                alert("Conversion Failed!");
+                document.getElementById("convertBtn").disabled = false;
+                document.getElementById("convertBtn").innerText = "Convert";
+            }
+
+        });
+
+    }, 2000);
+}
+
+</script>
+
+</body>
+</html>
