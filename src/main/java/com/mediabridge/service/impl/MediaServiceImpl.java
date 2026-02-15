@@ -4,13 +4,17 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.util.UUID;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.scheduling.annotation.Async;
 
+import com.mediabridge.model.JobStatus;
 import com.mediabridge.service.MediaService;
+import com.mediabridge.store.JobStore;
 
 @Service
 public class MediaServiceImpl implements MediaService {
@@ -24,7 +28,7 @@ public class MediaServiceImpl implements MediaService {
 	}
 
 	@Override
-	public File convertToSafeAndroid(MultipartFile file, String mode) throws Exception {
+	public File convertToSafeAndroid(MultipartFile file, String mode, String jobId) throws Exception {
 
 		File uploadDir = new File(basePath + File.separator + "uploads");
 		File outputDir = new File(basePath + File.separator + "converted");
@@ -45,17 +49,14 @@ public class MediaServiceImpl implements MediaService {
 		String command;
 
 		if ("high".equalsIgnoreCase(mode)) {
-
 			command = String.format(
 					"ffmpeg -i \"%s\" -vf \"scale=1920:-2,format=yuv420p\" " + "-c:v libx264 -preset fast -crf 20 "
-							+ "-profile:v high -level 4.1 " + "-movflags +faststart " + "-c:a aac -b:a 160k \"%s\"",
+							+ "-profile:v high -level 4.1 -movflags +faststart " + "-c:a aac -b:a 160k \"%s\"",
 					inputFile.getAbsolutePath(), outputFile.getAbsolutePath());
 		} else {
-
-			// SAFE MODE
 			command = String.format(
 					"ffmpeg -i \"%s\" -vf \"scale=1280:-2,format=yuv420p\" " + "-c:v libx264 -preset fast -crf 22 "
-							+ "-profile:v baseline -level 3.0 " + "-movflags +faststart " + "-c:a aac -b:a 128k \"%s\"",
+							+ "-profile:v baseline -level 3.0 -movflags +faststart " + "-c:a aac -b:a 128k \"%s\"",
 					inputFile.getAbsolutePath(), outputFile.getAbsolutePath());
 		}
 
@@ -63,26 +64,31 @@ public class MediaServiceImpl implements MediaService {
 		builder.redirectErrorStream(true);
 		Process process = builder.start();
 
-		Thread outputThread = new Thread(() -> {
-			try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+		BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
 
-				String line;
-				while ((line = reader.readLine()) != null) {
-					LOGGER.info("FFmpeg: {}", line);
-				}
+		String line;
+		double totalDuration = 0;
 
-			} catch (Exception e) {
-				LOGGER.error("Error reading FFmpeg output", e);
+		while ((line = reader.readLine()) != null) {
+
+			LOGGER.info("FFmpeg: {}", line);
+
+			// Extract total duration
+			if (line.contains("Duration:")) {
+				totalDuration = parseDuration(line);
 			}
-		});
 
-		outputThread.start();
+			// Extract current processed time
+			if (line.contains("time=") && totalDuration > 0) {
+				double currentTime = parseCurrentTime(line);
+				int progress = (int) ((currentTime / totalDuration) * 100);
+				progress = Math.min(progress, 100);
+
+				JobStore.progressMap.put(jobId, progress);
+			}
+		}
 
 		int exitCode = process.waitFor();
-
-		outputThread.join(); // wait for logging to finish
-
-		LOGGER.info("FFmpeg process exited with code: {}", exitCode);
 
 		if (exitCode != 0) {
 			throw new RuntimeException("FFmpeg conversion failed");
@@ -91,4 +97,48 @@ public class MediaServiceImpl implements MediaService {
 		return outputFile;
 	}
 
+	@Override
+	@Async
+	public void processVideoAsync(String jobId, MultipartFile file, String mode) {
+
+		try {
+
+			JobStore.statusMap.put(jobId, JobStatus.PROCESSING);
+			JobStore.progressMap.put(jobId, 0);
+
+			File result = convertToSafeAndroid(file, mode, jobId);
+
+			JobStore.statusMap.put(jobId, JobStatus.COMPLETED);
+			JobStore.progressMap.put(jobId, 100);
+			JobStore.resultMap.put(jobId, result);
+
+		} catch (Exception e) {
+			LOGGER.error("Conversion failed", e);
+			JobStore.statusMap.put(jobId, JobStatus.FAILED);
+		}
+	}
+
+
+	private double parseDuration(String line) {
+		try {
+			String duration = line.split("Duration:")[1].split(",")[0].trim();
+			return convertToSeconds(duration);
+		} catch (Exception e) {
+			return 0;
+		}
+	}
+
+	private double parseCurrentTime(String line) {
+		try {
+			String timePart = line.split("time=")[1].split(" ")[0];
+			return convertToSeconds(timePart);
+		} catch (Exception e) {
+			return 0;
+		}
+	}
+
+	private double convertToSeconds(String time) {
+		String[] parts = time.split(":");
+		return Integer.parseInt(parts[0]) * 3600 + Integer.parseInt(parts[1]) * 60 + Double.parseDouble(parts[2]);
+	}
 }
