@@ -6,8 +6,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 public interface MediaService {
 
-	public File convertToSafeAndroid(MultipartFile file, String mode, String jobId) throws Exception;
+	public File convertToSafeAndroid(File inputFile, String mode, String jobId) throws Exception;
 	
-	public void processVideoAsync(String jobId, MultipartFile file, String mode);
+	public void processVideoAsync(String jobId, File inputFile, String mode);
+	
+	public File saveUploadedFile(MultipartFile file) throws Exception;
 
 }
