@@ -30,7 +30,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var loadingText: TextView
     private lateinit var mainCard: View
 
-    private val BASE_URL = "http://192.168.1.3:8080/MediaBridge/"
+    private val BASE_URL = "http://192.168.1.2:8080/MediaBridge/"
     private var selectedFileUri: Uri? = null
     private var currentJobId: String? = null
 
